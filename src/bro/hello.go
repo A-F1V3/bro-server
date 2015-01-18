@@ -3,6 +3,7 @@ package hello
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -27,6 +28,10 @@ type NewUser struct {
 func init() {
 	http.HandleFunc("/sign_up", signUp)
 	http.HandleFunc("/sign_in", signIn)
+	http.HandleFunc("/find_friends", findFriends)
+	http.HandleFunc("/add_friend", addFriend)
+	http.HandleFunc("/friends", getFriends)
+	http.HandleFunc("/bro", sendBro)
 }
 
 func signUp(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +118,185 @@ func signIn(w http.ResponseWriter, r *http.Request) {
 	} else {
 		http.Error(w, "GTFO BRO!", http.StatusForbidden)
 	}
+}
+
+type FindFriendsData struct {
+	PhoneNumbers []string `json:"phone_numbers"`
+}
+
+func findFriends(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" {
+		_, err := authUser(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		jsonDecoder := json.NewDecoder(r.Body)
+		var findFriendsData FindFriendsData
+		err = jsonDecoder.Decode(&findFriendsData)
+		if err != nil {
+			http.Error(w, "INVALID JSON, BRO!", http.StatusBadRequest)
+			return
+		}
+
+		c := appengine.NewContext(r)
+		friends := make(map[string]string)
+		for _, phoneNumber := range findFriendsData.PhoneNumbers {
+			q := datastore.NewQuery("USER").
+				Filter("Phone =", phoneNumber)
+			var matches []User
+			_, err := q.GetAll(c, &matches)
+			if err != nil {
+				http.Error(w, "OH SHIT", http.StatusInternalServerError)
+			}
+			if len(matches) != 0 {
+				friends[matches[0].Phone] = matches[0].Username
+			}
+		}
+
+		encodedFriends, _ := json.Marshal(friends)
+		fmt.Fprint(w, string(encodedFriends))
+	} else {
+		http.Error(w, "GTFO BRO!", http.StatusForbidden)
+	}
+}
+
+type Friend struct {
+	Username string
+	Key      *datastore.Key
+}
+
+func addFriend(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" {
+		currentUser, err := authUser(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var friend Friend
+		jsonDecoder := json.NewDecoder(r.Body)
+		err = jsonDecoder.Decode(&friend)
+		if err != nil {
+			http.Error(w, "INVALID JSON, BRO!", http.StatusBadRequest)
+			return
+		}
+
+		//TODO: Prolly should verify the friend exists
+		c := appengine.NewContext(r)
+		friend.Key = datastore.NewKey(c, "USER", friend.Username, 0, nil)
+		friendKey := datastore.NewKey(c, "FRIEND", friend.Username, 0, currentUser)
+
+		_, err = datastore.Put(c, friendKey, &friend)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+	} else {
+		http.Error(w, "GTFO BRO!", http.StatusForbidden)
+	}
+}
+
+func getFriends(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		currentUser, err := authUser(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		c := appengine.NewContext(r)
+		q := datastore.NewQuery("FRIEND").
+			Ancestor(currentUser).Order("Username")
+		var friends []Friend
+		_, err = q.GetAll(c, &friends)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		friendResponse := struct {
+			Friends []string
+		}{
+			make([]string, len(friends)),
+		}
+
+		for i, friend := range friends {
+			friendResponse.Friends[i] = friend.Username
+		}
+
+		encodedFriends, err := json.Marshal(friendResponse)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Fprint(w, string(encodedFriends))
+
+	} else {
+		http.Error(w, "GTFO BRO!", http.StatusForbidden)
+	}
+}
+
+func sendBro(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" {
+		_, err := authUser(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var friend Friend
+		jsonDecoder := json.NewDecoder(r.Body)
+		err = jsonDecoder.Decode(&friend)
+		if err != nil {
+			http.Error(w, "INVALID JSON, BRO!", http.StatusBadRequest)
+			return
+		}
+
+		c := appengine.NewContext(r)
+
+		friendKey := datastore.NewKey(c, "USER", friend.Username, 0, nil)
+
+		// if err = datastore.Get(c, friendKey, &friend); err != nil {
+		// 	http.Error(w, err.Error(), http.StatusInternalServerError)
+		// 	return
+		// }
+
+		q := datastore.NewQuery("DEVICE").
+			Ancestor(friendKey)
+		var devices []Device
+		_, err = q.GetAll(c, &devices)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Fprint(w, devices)
+		//TODO: SEND BRO TO DEVICES
+
+	} else {
+		http.Error(w, "GTFO BRO!", http.StatusForbidden)
+	}
+}
+
+func authUser(r *http.Request) (*datastore.Key, error) {
+	if token, ok := r.Header["X-Bro-Token"]; ok {
+		c := appengine.NewContext(r)
+		q := datastore.NewQuery("DEVICE").
+			Filter("Token =", token[0])
+		var devices []Device
+		keys, err := q.GetAll(c, &devices)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(keys) == 0 {
+			return nil, errors.New("GTFO: Unknown Token")
+		}
+		return keys[0].Parent(), nil
+	}
+
+	return nil, errors.New("GTFO: Missing header")
 }
 
 func pseudo_uuid() string {
