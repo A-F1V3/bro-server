@@ -1,0 +1,7 @@
+indexes:
+- kind: USER
+  properties:
+  - name: Phone
+- kind: DEVICE
+  properties:
+  - name: Token
