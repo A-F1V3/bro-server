@@ -3,8 +3,8 @@
 import requests
 import json
 
-server_address = "http://192.168.0.11:8080"
-token = "D563F4ABBDC9C1145ABE2A7F3E9C9D0F"
+server_address = "http://localhost:8080"
+token = "E9C74407570DBA7C6D2DE3CE9ECC9699"
 
 headers = {
 	"X-Bro-Token": token

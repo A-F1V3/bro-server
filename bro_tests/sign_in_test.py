@@ -3,7 +3,7 @@
 import requests
 import json
 
-server_address = "http://192.168.0.11:8080"
+server_address = "http://localhost:8080"
 
 user = {
 	"username": "testuser",
