@@ -116,16 +116,31 @@ func signUp(w http.ResponseWriter, r *ApiRequest) {
 
 	user := User{
 		Username: *newUser.Username,
-		Phone:    *newUser.Phone,
 		Passhash: string(pwHash),
 	}
 
+	if newUser.Phone == nil {
+		user.Phone = ""
+	} else {
+		user.Phone = *newUser.Phone
+	}
+
 	userKey := datastore.NewKey(r.Context, "USER", user.Username, 0, nil)
-	_, err = datastore.Put(r.Context, userKey, &user)
+	if _, err = datastore.Put(r.Context, userKey, &user); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	result := make(map[string]string)
+	result["success"] = "true"
+	var encodedResult []byte
+	encodedResult, err = json.Marshal(result)
+
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	fmt.Fprint(w, string(encodedResult))
 }
 
 type SignInData struct {
