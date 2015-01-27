@@ -83,6 +83,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func init() {
+	http.Handle("/", Handler{GET, false, homePage})
 	http.Handle("/sign_up", Handler{POST, false, signUp})
 	http.Handle("/sign_in", Handler{POST, false, signIn})
 	http.Handle("/find_friends", Handler{POST, true, findFriends})
@@ -94,6 +95,10 @@ func init() {
 func JsonDecode(r *ApiRequest, v interface{}) error {
 	decoder := json.NewDecoder(r.Body)
 	return decoder.Decode(v)
+}
+
+func homePage(w http.ResponseWriter, r *ApiRequest) {
+	fmt.Fprint(w, "<html><body><p>Hello, world!</p></body></html>")
 }
 
 func signUp(w http.ResponseWriter, r *ApiRequest) {
@@ -156,6 +161,10 @@ type Device struct {
 	Token string
 }
 
+type TokenResponse struct {
+	Token string	`json:"token"`
+}
+
 func (device *Device) sendBro() error {
 	return nil
 }
@@ -194,7 +203,16 @@ func signIn(w http.ResponseWriter, r *ApiRequest) {
 		return
 	}
 
-	fmt.Fprint(w, device)
+	tokenResponse := TokenResponse {
+		Token: device.Token,
+	}
+
+	encodedToken, err := json.Marshal(tokenResponse)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fmt.Fprint(w, string(encodedToken))
 }
 
 func findFriends(w http.ResponseWriter, r *ApiRequest) {
