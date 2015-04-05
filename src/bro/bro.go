@@ -11,6 +11,8 @@ import (
 
 	"appengine"
 	"appengine/datastore"
+
+	//apns "github.com/anachronistic/apns"
 )
 
 type User struct {
@@ -41,7 +43,9 @@ type ApiRequest struct {
 }
 
 func authUser(r *ApiRequest) (*datastore.Key, error) {
+	r.Context.Debugf("Authing")
 	if token, ok := r.Header["X-Bro-Token"]; ok {
+		r.Context.Debugf("Got a bro token: " + token[0])
 		q := datastore.NewQuery("DEVICE").
 			Filter("Token =", token[0])
 
@@ -56,6 +60,9 @@ func authUser(r *ApiRequest) (*datastore.Key, error) {
 		}
 		return keys[0].Parent(), nil
 	}
+
+	r.Context.Debugf("Missing bro token")
+
 	return nil, errors.New("GTFO: Missing header")
 }
 
@@ -156,9 +163,10 @@ type SignInData struct {
 }
 
 type Device struct {
-	Id    string
-	Type  string
-	Token string
+	Id    		string
+	Type  		string
+	Token 		string // Our own internal login token
+	PushToken 	string // Used for sending push notifications
 }
 
 type TokenResponse struct {
@@ -284,7 +292,7 @@ func getFriends(w http.ResponseWriter, r *ApiRequest) {
 	}
 
 	friendResponse := struct {
-		Friends []string
+		Friends []string	`json:"friends"`
 	}{
 		make([]string, len(friends)),
 	}
