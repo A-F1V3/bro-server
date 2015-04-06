@@ -12,7 +12,7 @@ import (
 	"appengine"
 	"appengine/datastore"
 
-	//apns "github.com/anachronistic/apns"
+	apns "github.com/anachronistic/apns"
 )
 
 type User struct {
@@ -160,6 +160,7 @@ type SignInData struct {
 	Password   *string
 	DeviceId   *string `json:"device_id"`
 	DeviceType *string `json:"device_type"`
+	PushToken  *string `json:"push_token"`
 }
 
 type Device struct {
@@ -173,7 +174,23 @@ type TokenResponse struct {
 	Token string	`json:"token"`
 }
 
-func (device *Device) sendBro() error {
+func (device *Device) sendBro(r *ApiRequest) error {
+
+	payload := apns.NewPayload()
+	payload.Alert = "Hello, world!"
+
+	pn := apns.NewPushNotification()
+	pn.DeviceToken = device.PushToken
+	pn.AddPayload(payload)
+
+	client := apns.NewClient("gateway.sandbox.push.apple.com:2195", "cert.pem", "key.pem")
+	resp := client.Send(pn)
+
+	alert, _ := pn.PayloadString()
+	r.Context.Debugf("  Alert:", alert)
+	r.Context.Debugf("Success:", resp.Success)
+	r.Context.Debugf("  Error:", resp.Error)
+
 	return nil
 }
 
@@ -200,10 +217,18 @@ func signIn(w http.ResponseWriter, r *ApiRequest) {
 
 	deviceKey := datastore.NewKey(r.Context, "DEVICE", *signInData.DeviceId, 0, userKey)
 
+	var push_token string
+	if signInData.PushToken == nil {
+		push_token = ""
+	} else {
+		push_token = *signInData.PushToken
+	}
+
 	device := Device{
 		Id:    *signInData.DeviceId,
 		Type:  *signInData.DeviceType,
 		Token: pseudo_uuid(),
+		PushToken: push_token,
 	}
 
 	if _, err := datastore.Put(r.Context, deviceKey, &device); err != nil {
@@ -329,7 +354,7 @@ func sendBro(w http.ResponseWriter, r *ApiRequest) {
 	}
 
 	for _, device := range devices {
-		if err := device.sendBro(); err != nil {
+		if err := device.sendBro(r); err != nil {
 			//Just eat the error right now
 		}
 	}
