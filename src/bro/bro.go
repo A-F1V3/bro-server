@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -37,33 +38,46 @@ const (
 )
 
 type ApiRequest struct {
-	CurrentUser *datastore.Key
-	Context     appengine.Context
+	CurrentUserKey  *datastore.Key
+	CurrentUser 	*User
+	Context     	appengine.Context
 	*http.Request
 }
 
-func authUser(r *ApiRequest) (*datastore.Key, error) {
+func authUser(r *ApiRequest) (error) {
 	r.Context.Debugf("Authing")
 	if token, ok := r.Header["X-Bro-Token"]; ok {
 		r.Context.Debugf("Got a bro token: " + token[0])
-		q := datastore.NewQuery("DEVICE").
-			Filter("Token =", token[0])
+		q := datastore.NewQuery("DEVICE").Filter("Token =", token[0])
 
 		var devices []Device
 		keys, err := q.GetAll(r.Context, &devices)
+
 		if err != nil {
-			return nil, err
+			r.Context.Debugf("Failed to get devices")
+			return err
 		}
 
 		if len(keys) == 0 {
-			return nil, errors.New("GTFO: Unknown Token")
+			r.Context.Debugf("Unknown token")
+			return errors.New("GTFO: Unknown Token")
 		}
-		return keys[0].Parent(), nil
+
+		var user User
+		if err := datastore.Get(r.Context, keys[0].Parent(), &user); err != nil {
+			r.Context.Debugf("Failed to load device")
+			return err
+		}
+
+		r.CurrentUser = &user
+		r.CurrentUserKey = keys[0].Parent()
+
+		return nil
 	}
 
 	r.Context.Debugf("Missing bro token")
 
-	return nil, errors.New("GTFO: Missing header")
+	return errors.New("GTFO: Missing header")
 }
 
 type Handler struct {
@@ -78,10 +92,11 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiRequest := &ApiRequest{nil, appengine.NewContext(r), r}
+	apiRequest := &ApiRequest{nil, nil, appengine.NewContext(r), r}
+
 	if h.Auth {
 		var err error
-		if apiRequest.CurrentUser, err = authUser(apiRequest); err != nil {
+		if err = authUser(apiRequest); err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
@@ -202,6 +217,8 @@ func signIn(w http.ResponseWriter, r *ApiRequest) {
 		return
 	}
 
+	r.Context.Debugf("Username: " + *signInData.Username)
+
 	userKey := datastore.NewKey(r.Context, "USER", *signInData.Username, 0, nil)
 
 	var user User
@@ -236,6 +253,13 @@ func signIn(w http.ResponseWriter, r *ApiRequest) {
 		return
 	}
 
+	// XXX: Workaround to ensure device is applied before returning
+	// TODO: Investigate is transactions would fix this
+	var newDevice Device
+	if err := datastore.Get(r.Context, deviceKey, &newDevice); err != nil {
+		r.Context.Debugf("Datastore doesn't see devicekey, weird")
+	}
+
 	tokenResponse := TokenResponse {
 		Token: device.Token,
 	}
@@ -245,6 +269,7 @@ func signIn(w http.ResponseWriter, r *ApiRequest) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	r.Context.Debugf(string(encodedToken))
 	fmt.Fprint(w, string(encodedToken))
 }
 
@@ -290,25 +315,40 @@ type Friend struct {
 }
 
 func addFriend(w http.ResponseWriter, r *ApiRequest) {
-	var friend Friend
-	if err := JsonDecode(r, &friend); err != nil {
+	var newFriend Friend
+	if err := JsonDecode(r, &newFriend); err != nil {
 		http.Error(w, "INVALID JSON, BRO!", http.StatusBadRequest)
 		return
 	}
 
-	//TODO: Prolly should verify the friend exists
-	friend.Key = datastore.NewKey(r.Context, "USER", friend.Username, 0, nil)
-	friendKey := datastore.NewKey(r.Context, "FRIEND", friend.Username, 0, r.CurrentUser)
+	if strings.EqualFold(r.CurrentUser.Username, newFriend.Username) {
+		http.Error(w, "Can't be your own bro, bro", http.StatusBadRequest)
+		return
+	}
 
-	if _, err := datastore.Put(r.Context, friendKey, &friend); err != nil {
+	newFriend.Key = datastore.NewKey(r.Context, "USER", newFriend.Username, 0, nil)
+
+	var friendUser User
+	if err := datastore.Get(r.Context, newFriend.Key, &friendUser); err != nil {
+		if err == datastore.ErrNoSuchEntity {
+			http.Error(w, "Friend not found", http.StatusNotFound)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+
+		return
+	}
+
+	friendKey := datastore.NewKey(r.Context, "FRIEND", newFriend.Username, 0, r.CurrentUserKey)
+
+	if _, err := datastore.Put(r.Context, friendKey, &newFriend); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
 
 func getFriends(w http.ResponseWriter, r *ApiRequest) {
-	q := datastore.NewQuery("FRIEND").
-		Ancestor(r.CurrentUser).Order("Username")
+	q := datastore.NewQuery("FRIEND").Ancestor(r.CurrentUserKey).Order("Username")
 
 	var friends []Friend
 	if _, err := q.GetAll(r.Context, &friends); err != nil {
